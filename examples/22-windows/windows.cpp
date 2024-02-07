@@ -9,6 +9,9 @@
 #include <bx/string.h>
 #include "imgui/imgui.h"
 
+#include <string>
+#include <bx/file.h>
+
 void cmdCreateWindow(const void* _userData);
 void cmdDestroyWindow(const void* _userData);
 
@@ -66,6 +69,132 @@ static const uint16_t s_cubeIndices[36] =
 	6, 3, 7,
 };
 
+void savePng(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _srcPitch, const void* _src, bimg::TextureFormat::Enum _format, bool _yflip)
+{
+	bx::FileWriter writer;
+	bx::Error err;
+	if (bx::open(&writer, _filePath, false, &err) )
+	{
+		bimg::imageWritePng(&writer, _width, _height, _srcPitch, _src, _format, _yflip, &err);
+		bx::close(&writer);
+	}
+}
+
+struct BgfxCallback : public bgfx::CallbackI
+{
+	virtual ~BgfxCallback()
+	{
+	}
+
+	virtual void fatal(const char* _filePath, uint16_t _line, bgfx::Fatal::Enum _code, const char* _str) override
+	{
+		BX_UNUSED(_filePath, _line);
+
+		// Something unexpected happened, inform user and bail out.
+		bx::debugPrintf("Fatal error: 0x%08x: %s", _code, _str);
+
+		// Must terminate, continuing will cause crash anyway.
+		abort();
+	}
+
+	virtual void traceVargs(const char* _filePath, uint16_t _line, const char* _format, va_list _argList) override
+	{
+		bx::debugPrintf("%s (%d): ", _filePath, _line);
+		bx::debugPrintfVargs(_format, _argList);
+	}
+
+	virtual void profilerBegin(const char* /*_name*/, uint32_t /*_abgr*/, const char* /*_filePath*/, uint16_t /*_line*/) override
+	{
+	}
+
+	virtual void profilerBeginLiteral(const char* /*_name*/, uint32_t /*_abgr*/, const char* /*_filePath*/, uint16_t /*_line*/) override
+	{
+	}
+
+	virtual void profilerEnd() override
+	{
+	}
+
+	virtual uint32_t cacheReadSize(uint64_t _id) override
+	{
+		char filePath[256];
+		bx::snprintf(filePath, sizeof(filePath), "temp/%016" PRIx64, _id);
+
+		// Use cache id as filename.
+		bx::FileReaderI* reader = entry::getFileReader();
+		bx::Error err;
+		if (bx::open(reader, filePath, &err) )
+		{
+			uint32_t size = (uint32_t)bx::getSize(reader);
+			bx::close(reader);
+			// Return size of shader file.
+			return size;
+		}
+
+		// Return 0 if shader is not found.
+		return 0;
+	}
+
+	virtual bool cacheRead(uint64_t _id, void* _data, uint32_t _size) override
+	{
+		char filePath[256];
+		bx::snprintf(filePath, sizeof(filePath), "temp/%016" PRIx64, _id);
+
+		// Use cache id as filename.
+		bx::FileReaderI* reader = entry::getFileReader();
+		bx::Error err;
+		if (bx::open(reader, filePath, &err) )
+		{
+			// Read shader.
+			uint32_t result = bx::read(reader, _data, _size, &err);
+			bx::close(reader);
+
+			// Make sure that read size matches requested size.
+			return result == _size;
+		}
+
+		// Shader is not found in cache, needs to be rebuilt.
+		return false;
+	}
+
+	virtual void cacheWrite(uint64_t _id, const void* _data, uint32_t _size) override
+	{
+		char filePath[256];
+		bx::snprintf(filePath, sizeof(filePath), "temp/%016" PRIx64, _id);
+
+		// Use cache id as filename.
+		bx::FileWriterI* writer = entry::getFileWriter();
+		bx::Error err;
+		if (bx::open(writer, filePath, false, &err) )
+		{
+			// Write shader to cache location.
+			bx::write(writer, _data, _size, &err);
+			bx::close(writer);
+		}
+	}
+
+	virtual void screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch, const void* _data, uint32_t /*_size*/, bool _yflip) override
+	{
+		char temp[1024];
+
+		// Save screen shot as PNG.
+		bx::snprintf(temp, BX_COUNTOF(temp), "%s.png", _filePath);
+		savePng(temp, _width, _height, _pitch, _data, bimg::TextureFormat::BGRA8, _yflip);
+	}
+
+	virtual void captureBegin(uint32_t _width, uint32_t _height, uint32_t /*_pitch*/, bgfx::TextureFormat::Enum /*_format*/, bool _yflip) override
+	{
+	}
+
+	virtual void captureEnd() override
+	{
+	}
+
+	virtual void captureFrame(const void* _data, uint32_t /*_size*/) override
+	{
+	}
+};
+
 class ExampleWindows : public entry::AppI
 {
 public:
@@ -92,6 +221,7 @@ public:
 		init.resolution.width  = m_width;
 		init.resolution.height = m_height;
 		init.resolution.reset  = m_reset;
+		init.callback  = &m_callback;  // custom callback handler
 		bgfx::init(init);
 
 		const bgfx::Caps* caps = bgfx::getCaps();
@@ -176,6 +306,8 @@ public:
 
 	bool update() override
 	{
+		m_frame++;
+
 		if (!entry::processWindowEvents(m_state, m_debug, m_reset) )
 		{
 			entry::MouseState mouseState = m_state.m_mouse;
@@ -249,6 +381,17 @@ public:
 			// if no other draw calls are submitted to view 0.
 			bgfx::touch(0);
 
+			std::string base_path = "temp/";
+
+			if (m_frame % 300 == 0) {
+				uint32_t cnt = m_frame / 300;
+
+				std::string filename = base_path + "frame_" + std::to_string(cnt) + "_0";
+
+				bgfx::FrameBufferHandle fbh = BGFX_INVALID_HANDLE;
+				bgfx::requestScreenShot(fbh, filename.c_str());
+			}
+
 			// Set view and projection matrix for view 0.
 			for (uint8_t ii = 1; ii < MAX_WINDOWS; ++ii)
 			{
@@ -270,6 +413,14 @@ public:
 						, 1.0f
 						, 0
 						);
+
+					if (m_frame % 300 == 0) {
+						uint32_t cnt = m_frame / 300;
+
+						std::string filename = base_path + "frame_" + std::to_string(cnt) + "_" + std::to_string(ii);
+
+						bgfx::requestScreenShot(m_fbh[ii], filename.c_str());
+					}
 				}
 			}
 
@@ -360,6 +511,8 @@ public:
 		}
 	}
 
+	BgfxCallback  m_callback;
+
 	entry::WindowState m_state;
 
 	uint32_t m_width;
@@ -377,6 +530,8 @@ public:
 	InputBinding* m_bindings;
 
 	int64_t m_timeOffset;
+
+	uint32_t m_frame = 0;
 };
 
 } // namespace
