@@ -1,4 +1,3 @@
-$input a_position, a_color0
 $output v_color0
 
 /*
@@ -7,9 +6,22 @@ $output v_color0
  */
 
 #include "../common/common.sh"
+#include "bgfx_compute.sh"
+
+BUFFER_RO(points, vec2, 0);
+BUFFER_RO(colors, uint, 1);
+
+vec4 uintABGRToVec4Color(uint color)
+{
+    return vec4(
+	    float(color & uint(0x000000FF)) / 255.0,
+		float((color & uint(0x0000FF00)) >> uint(8)) / 255.0,
+		float((color & uint(0x00FF0000)) >> uint(16)) / 255.0,
+		float((color & uint(0xFF000000)) >> uint(24)) / 255.0);
+}
 
 void main()
 {
-	gl_Position = mul(u_modelViewProj, vec4(a_position, 1.0) );
-	v_color0 = a_color0;
+    gl_Position = vec4(points[gl_VertexID], 0.0, 1.0);
+	v_color0 = uintABGRToVec4Color(colors[gl_VertexID]);
 }

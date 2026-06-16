@@ -31,6 +31,53 @@ struct PosColorVertex
 
 bgfx::VertexLayout PosColorVertex::ms_layout;
 
+struct Pos2Vertex {
+    float m_x;
+    float m_y;
+
+    static void init()
+    {
+        ms_layout
+            .begin()
+            .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
+            .end();
+    };
+
+    static bgfx::VertexLayout ms_layout;
+};
+
+bgfx::VertexLayout Pos2Vertex::ms_layout;
+
+struct ColorVertex {
+    uint32_t m_abgr;
+
+    static void init()
+    {
+        ms_layout
+            .begin()
+            .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
+            .end();
+    };
+
+    static bgfx::VertexLayout ms_layout;
+};
+
+bgfx::VertexLayout ColorVertex::ms_layout;
+
+static Pos2Vertex s_triangleVertices[] =
+{
+    { -1.f, -1.f },
+    {  1.f, -1.f },
+    {  0.f,  1.f },
+};
+
+static ColorVertex s_triangleColors[] =
+{
+    { 0xffff0000 },
+    { 0xff00ff00 },
+    { 0xff0000ff },
+};
+
 static PosColorVertex s_cubeVertices[] =
 {
 	{-1.0f,  1.0f,  1.0f, 0xff000000 },
@@ -176,6 +223,28 @@ public:
 			, PosColorVertex::ms_layout
 			);
 
+        Pos2Vertex::init();
+
+        m_vbhTriangleVertices = bgfx::createVertexBuffer(
+            // Static data can be passed with bgfx::makeRef
+              bgfx::makeRef(s_triangleVertices, sizeof(s_triangleVertices) )
+            , Pos2Vertex::ms_layout
+            , BGFX_BUFFER_COMPUTE_READ |
+              BGFX_BUFFER_COMPUTE_FORMAT_32X2 |
+              BGFX_BUFFER_COMPUTE_TYPE_FLOAT
+        );
+
+        ColorVertex::init();
+
+        m_vbhTriangleColors = bgfx::createVertexBuffer(
+            // Static data can be passed with bgfx::makeRef
+              bgfx::makeRef(s_triangleColors, sizeof(s_triangleColors) )
+            , ColorVertex::ms_layout
+            , BGFX_BUFFER_COMPUTE_READ |
+              BGFX_BUFFER_COMPUTE_FORMAT_32X1 |
+              BGFX_BUFFER_COMPUTE_TYPE_UINT
+        );
+
 		// Create static index buffer for triangle list rendering.
 		m_ibh[0] = bgfx::createIndexBuffer(
 			// Static data can be passed with bgfx::makeRef
@@ -225,6 +294,8 @@ public:
 		}
 
 		bgfx::destroy(m_vbh);
+        bgfx::destroy(m_vbhTriangleVertices);
+        bgfx::destroy(m_vbhTriangleColors);
 		bgfx::destroy(m_program);
 
 		// Shutdown bgfx.
@@ -297,44 +368,51 @@ public:
 			// if no other draw calls are submitted to view 0.
 			bgfx::touch(0);
 
-			bgfx::IndexBufferHandle ibh = m_ibh[m_pt];
-			uint64_t state = 0
-				| (m_r ? BGFX_STATE_WRITE_R : 0)
-				| (m_g ? BGFX_STATE_WRITE_G : 0)
-				| (m_b ? BGFX_STATE_WRITE_B : 0)
-				| (m_a ? BGFX_STATE_WRITE_A : 0)
-				| BGFX_STATE_WRITE_Z
-				| BGFX_STATE_DEPTH_TEST_LESS
-				| BGFX_STATE_CULL_CW
-				| BGFX_STATE_MSAA
-				| s_ptState[m_pt]
-				;
+            // bgfx::IndexBufferHandle ibh = m_ibh[m_pt];
+            uint64_t state = 0
+            	| (m_r ? BGFX_STATE_WRITE_R : 0)
+            	| (m_g ? BGFX_STATE_WRITE_G : 0)
+            	| (m_b ? BGFX_STATE_WRITE_B : 0)
+            	| (m_a ? BGFX_STATE_WRITE_A : 0)
+            	| BGFX_STATE_WRITE_Z
+            	| BGFX_STATE_DEPTH_TEST_LESS
+            	| BGFX_STATE_CULL_CW
+            	| BGFX_STATE_MSAA
+            	| s_ptState[m_pt]
+            	;
 
 			// Submit 11x11 cubes.
-			for (uint32_t yy = 0; yy < 11; ++yy)
-			{
-				for (uint32_t xx = 0; xx < 11; ++xx)
-				{
-					float mtx[16];
-					bx::mtxRotateXY(mtx, time + xx*0.21f, time + yy*0.37f);
-					mtx[12] = -15.0f + float(xx)*3.0f;
-					mtx[13] = -15.0f + float(yy)*3.0f;
-					mtx[14] = 0.0f;
+            // for (uint32_t yy = 0; yy < 11; ++yy)
+            // {
+            // 	for (uint32_t xx = 0; xx < 11; ++xx)
+            // 	{
+            // 		float mtx[16];
+            // 		bx::mtxRotateXY(mtx, time + xx*0.21f, time + yy*0.37f);
+            // 		mtx[12] = -15.0f + float(xx)*3.0f;
+            // 		mtx[13] = -15.0f + float(yy)*3.0f;
+            // 		mtx[14] = 0.0f;
 
-					// Set model matrix for rendering.
-					bgfx::setTransform(mtx);
+            // 		// Set model matrix for rendering.
+            // 		bgfx::setTransform(mtx);
 
-					// Set vertex and index buffer.
-					bgfx::setVertexBuffer(0, m_vbh);
-					bgfx::setIndexBuffer(ibh);
+            // 		// Set vertex and index buffer.
+            // 		bgfx::setVertexBuffer(0, m_vbh);
+            // 		bgfx::setIndexBuffer(ibh);
 
-					// Set render states.
-					bgfx::setState(state);
+            // 		// Set render states.
+            // 		bgfx::setState(state);
 
-					// Submit primitive for rendering to view 0.
-					bgfx::submit(0, m_program);
-				}
-			}
+            // 		// Submit primitive for rendering to view 0.
+            // 		bgfx::submit(0, m_program);
+            // 	}
+            // }
+
+            bgfx::setVertexCount(3);
+
+            bgfx::setBuffer(0, m_vbhTriangleVertices, bgfx::Access::Read);
+            bgfx::setBuffer(1, m_vbhTriangleColors, bgfx::Access::Read);
+            bgfx::setState(state);
+            bgfx::submit(0, m_program);
 
 			// Advance to next frame. Rendering thread will be kicked to
 			// process submitted rendering primitives.
@@ -353,6 +431,9 @@ public:
 	uint32_t m_debug;
 	uint32_t m_reset;
 	bgfx::VertexBufferHandle m_vbh;
+    bgfx::VertexBufferHandle m_vbhTriangleVertices;
+    bgfx::VertexBufferHandle m_vbhTriangleColors;
+
 	bgfx::IndexBufferHandle m_ibh[BX_COUNTOF(s_ptState)];
 	bgfx::ProgramHandle m_program;
 
