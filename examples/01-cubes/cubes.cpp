@@ -10,6 +10,24 @@
 namespace
 {
 
+struct Pos2D
+{
+    float m_x;
+    float m_y;
+
+    static void init()
+    {
+        ms_layout
+            .begin()
+            .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
+            .end();
+    };
+
+    static bgfx::VertexLayout ms_layout;
+};
+
+bgfx::VertexLayout Pos2D::ms_layout;
+
 struct PosColorVertex
 {
 	float m_x;
@@ -30,6 +48,23 @@ struct PosColorVertex
 };
 
 bgfx::VertexLayout PosColorVertex::ms_layout;
+
+static Pos2D s_linesVertices[] =
+{
+    {20,  20},
+    {120, 120},
+    {20,  120},
+    {120, 20}
+};
+
+// just 100 pixels down from lines above
+static Pos2D s_linesStripVertices[] =
+{
+    {20,  220},
+    {120, 320},
+    {20,  320},
+    {120, 220}
+};
 
 static PosColorVertex s_cubeVertices[] =
 {
@@ -166,6 +201,10 @@ public:
 			, 0
 			);
 
+        Pos2D::init();
+
+        m_uTopology = bgfx::createUniform("u_topology", bgfx::UniformType::Vec4);
+
 		// Create vertex stream declaration.
 		PosColorVertex::init();
 
@@ -175,6 +214,18 @@ public:
 			  bgfx::makeRef(s_cubeVertices, sizeof(s_cubeVertices) )
 			, PosColorVertex::ms_layout
 			);
+
+        m_vbLines = bgfx::createVertexBuffer(bgfx::makeRef(s_linesVertices, sizeof(s_linesVertices)),
+                                             Pos2D::ms_layout,
+                                             BGFX_BUFFER_COMPUTE_FORMAT_32X2
+                                                 | BGFX_BUFFER_COMPUTE_TYPE_FLOAT
+                                                 | BGFX_BUFFER_COMPUTE_READ);
+
+        m_vbLineStrip = bgfx::createVertexBuffer(bgfx::makeRef(s_linesStripVertices, sizeof(s_linesStripVertices)),
+                                             Pos2D::ms_layout,
+                                             BGFX_BUFFER_COMPUTE_FORMAT_32X2
+                                                 | BGFX_BUFFER_COMPUTE_TYPE_FLOAT
+                                                 | BGFX_BUFFER_COMPUTE_READ);
 
 		// Create static index buffer for triangle list rendering.
 		m_ibh[0] = bgfx::createIndexBuffer(
@@ -225,6 +276,9 @@ public:
 		}
 
 		bgfx::destroy(m_vbh);
+        bgfx::destroy(m_vbLines);
+        bgfx::destroy(m_vbLineStrip);
+        bgfx::destroy(m_uTopology);
 		bgfx::destroy(m_program);
 
 		// Shutdown bgfx.
@@ -232,6 +286,40 @@ public:
 
 		return 0;
 	}
+
+    void drawLines()
+    {
+        bgfx::setBuffer(0, m_vbLines, bgfx::Access::Read);
+        bgfx::setState(
+            0 | BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+            BGFX_STATE_DEPTH_TEST_ALWAYS | BGFX_STATE_BLEND_ALPHA);
+
+        float topology[4];
+        topology[0] = -1.f; // lines
+        bgfx::setUniform(m_uTopology, topology);
+
+        // 2 lines
+        // 6 vertices per line
+        bgfx::setVertexCount(6 * 2);
+        bgfx::submit(0, m_program);
+    }
+
+    void drawLineStrip()
+    {
+        bgfx::setBuffer(0, m_vbLineStrip, bgfx::Access::Read);
+        bgfx::setState(
+            0 | BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+            BGFX_STATE_DEPTH_TEST_ALWAYS | BGFX_STATE_BLEND_ALPHA);
+
+        float topology[4];
+        topology[0] = 1.f; // line strip
+        bgfx::setUniform(m_uTopology, topology);
+
+        // 3 lines
+        // 6 vertices per line
+        bgfx::setVertexCount(6 * 3);
+        bgfx::submit(0, m_program);
+    }
 
 	bool update() override
 	{
@@ -305,36 +393,12 @@ public:
 				| (m_a ? BGFX_STATE_WRITE_A : 0)
 				| BGFX_STATE_WRITE_Z
 				| BGFX_STATE_DEPTH_TEST_LESS
-				| BGFX_STATE_CULL_CW
 				| BGFX_STATE_MSAA
 				| s_ptState[m_pt]
 				;
 
-			// Submit 11x11 cubes.
-			for (uint32_t yy = 0; yy < 11; ++yy)
-			{
-				for (uint32_t xx = 0; xx < 11; ++xx)
-				{
-					float mtx[16];
-					bx::mtxRotateXY(mtx, time + xx*0.21f, time + yy*0.37f);
-					mtx[12] = -15.0f + float(xx)*3.0f;
-					mtx[13] = -15.0f + float(yy)*3.0f;
-					mtx[14] = 0.0f;
-
-					// Set model matrix for rendering.
-					bgfx::setTransform(mtx);
-
-					// Set vertex and index buffer.
-					bgfx::setVertexBuffer(0, m_vbh);
-					bgfx::setIndexBuffer(ibh);
-
-					// Set render states.
-					bgfx::setState(state);
-
-					// Submit primitive for rendering to view 0.
-					bgfx::submit(0, m_program);
-				}
-			}
+            drawLines();
+            drawLineStrip();
 
 			// Advance to next frame. Rendering thread will be kicked to
 			// process submitted rendering primitives.
@@ -352,6 +416,9 @@ public:
 	uint32_t m_height;
 	uint32_t m_debug;
 	uint32_t m_reset;
+    bgfx::UniformHandle m_uTopology;
+    bgfx::VertexBufferHandle m_vbLines;
+    bgfx::VertexBufferHandle m_vbLineStrip;
 	bgfx::VertexBufferHandle m_vbh;
 	bgfx::IndexBufferHandle m_ibh[BX_COUNTOF(s_ptState)];
 	bgfx::ProgramHandle m_program;
